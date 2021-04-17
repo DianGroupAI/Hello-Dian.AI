@@ -29,8 +29,6 @@ class SGD(Optim):
         self.momentum = momentum
 
     def _update_weight(self, tensor):
-        tensor.v = ...
-        tensor -= self.lr * tensor.v
 
 
 class Adam(Optim):
@@ -40,5 +38,3 @@ class Adam(Optim):
         ...
 
     def _update_weight(self, tensor):
-        tensor.v = ...
-        tensor -= self.lr * tensor.v

@@ -70,8 +70,6 @@ class Linear(Module):
         Returns:
             out: output of shape (N, L_out).
         """
-        self.x = x
-        return np.dot(x, self.w[1:]) + self.w[0]
 
     def backward(self, delta):
         """Backward propagation of linear module.
@@ -81,8 +79,6 @@ class Linear(Module):
         Returns:
             dx: input delta of shape (N, L_in).
         """
-        self.w.grad = np.vstack((np.sum(delta, axis=0), np.dot(self.x.T, delta)))
-        return np.dot(delta, self.w[1:].T)
 
 
 class BatchNorm1d(Module):
@@ -110,15 +106,7 @@ class BatchNorm1d(Module):
         Returns:
             out: output of shape (N, L).
         """
-        if self.training:
-            self.mean = np.mean(x, axis = 0)
-            self.var = np.var(x, axis = 0)
-            self.running_mean = self.momentum * self.mean + (1 - self.momentum) * self.mean
-            self.running_var = self.momentum * self.var + (1 - self.momentum) * self.var
-            self.x = (x - self.mean) / np.sqrt(self.var + self.eps)
-        else:
-            self.x = (x - self.running_mean) / np.sqrt(self.running_var + self.eps)
-        return self.gamma * self.x + self.beta
+
 
     def backward(self, delta):
         """Backward propagation of batch norm module.
@@ -128,12 +116,7 @@ class BatchNorm1d(Module):
         Returns:
             dx: input delta of shape (N, L).
         """
-        self.gamma.grad = np.sum(delta * self.x, axis=0)
-        self.beta.grad = np.sum(delta, axis=0)
-        N = delta.shape[0]
-        delta *= self.gamma
-        delta = N * delta - np.sum(delta, axis=0) - self.x * np.sum(delta * self.x, axis=0)
-        return delta / N / np.sqrt(self.var + self.eps)
+
 
 
 class Conv2d(Module):
@@ -165,23 +148,7 @@ class Conv2d(Module):
         Returns:
             out: output of shape (B, C_out, H_out, W_out).
         """
-        B, C, H, W = x.shape
-        Hp, Wp = map(lambda i : (i - self.kernel_size + 2 * self.padding) // self.stride + 1, (H, W))
-        out = np.ndarray((B, self.channels, Hp, Wp))
-        if self.padding:
-            x = np.pad(x, ((0, 0), (0, 0), (self.padding, self.padding), (self.padding, self.padding)))
-        self.x = x
 
-        for b, c, h, w in itertools.product(*(range(d) for d in out.shape)):
-            out[b, c, h, w] = np.sum(self.kernel[c] * x[b, :, h * self.stride : h * self.stride + self.kernel_size,
-                                                              w * self.stride : w * self.stride + self.kernel_size])
-
-        # # Method 2
-        # shape = (B, C, Hp, Wp, self.kernel_size, self.kernel_size)
-        # strides = (*x.strides[:-2], x.strides[-2] * self.stride, x.strides[-1] * self.stride, *x.strides[-2:])
-        # xp = np.lib.stride_tricks.as_strided(out, shape=shape, strides=strides, writeable=False)
-        # x = np.tensordot(xp, self.kernel, axes=((1, -2, -1), (1, 2, 3))).transpose((0, 3, 1, 2))
-        return (out + self.bias) if self.bias else out
 
     def backward(self, delta):
         """Backward propagation of convolution module.
@@ -191,23 +158,7 @@ class Conv2d(Module):
         Returns:
             dx: input delta of shape (B, C_in, H_in, W_in).
         """
-        dx = np.zeros_like(self.x)
-        self.kernel.grad = np.zeros_like(self.kernel)
-        if self.bias:
-            self.bias.grad = np.zeros_like(self.bias)
 
-        for b, c, h, w in itertools.product(*(range(d) for d in delta.shape)):
-            dx[b, :, h * self.stride : h * self.stride + self.kernel_size,
-                     w * self.stride : w * self.stride + self.kernel_size] += self.kernel[c] * delta[b, c, h, w]
-
-            self.kernel.grad[c] += delta[b, c, h, w] * self.x[b, :, h * self.stride : h * self.stride + self.kernel_size,
-                                                                    w * self.stride : w * self.stride + self.kernel_size]
-            if self.bias and h == w == 0:
-                self.bias.grad[c] += np.sum(delta[b, c])
-
-        if self.padding:
-            dx = dx[..., self.padding:-self.padding, self.padding:-self.padding]
-        return dx
 
 
 class AvgPool(Module):
@@ -233,17 +184,7 @@ class AvgPool(Module):
         Returns:
             out: output of shape (B, C, H_out, W_out).
         """
-        B, C, H, W = x.shape
-        Hp, Wp = map(lambda i : (i - self.kernel_size + 2 * self.padding) // self.stride + 1, (H, W))
-        out = np.ndarray((B, C, Hp, Wp))
-        if self.padding:
-            x = np.pad(x, ((0, 0), (0, 0), (self.padding, self.padding), (self.padding, self.padding)))
-        self.x = x
 
-        for h, w in itertools.product(range(Hp), range(Wp)):
-            out[..., h, w] = np.mean(x[..., h * self.stride : h * self.stride + self.kernel_size,
-                                            w * self.stride : w * self.stride + self.kernel_size], axis=(2, 3))
-        return out
 
     def backward(self, delta):
         """Backward propagation of average pooling module.
@@ -253,16 +194,7 @@ class AvgPool(Module):
         Returns:
             dx: input delta of shape (B, C, H_in, W_in).
         """
-        dx = np.zeros_like(self.x)
-        B, C, H, W = delta.shape
-        for h, w in itertools.product(range(H), range(W)):
-            dx[..., h * self.stride : h * self.stride + self.kernel_size,
-                    w * self.stride : w * self.stride + self.kernel_size] \
-                += (np.expand_dims(delta[..., h, w], 2).repeat(self.kernel_size ** 2, 2) / \
-                   (self.kernel_size ** 2)).reshape(B, C, self.kernel_size, self.kernel_size)
-        if self.padding:
-            dx = dx[..., self.padding:-self.padding, self.padding:-self.padding]
-        return dx
+
 
 
 class MaxPool(Module):
@@ -288,23 +220,7 @@ class MaxPool(Module):
         Returns:
             out: output of shape (B, C, H_out, W_out).
         """
-        B, C, H, W = x.shape
-        Hp, Wp = map(lambda i : (i - self.kernel_size + 2 * self.padding) // self.stride + 1, (H, W))
-        out = np.ndarray((B, C, Hp, Wp))
-        if self.padding:
-            x = np.pad(x, ((0, 0), (0, 0), (self.padding, self.padding), (self.padding, self.padding)))
-        self.x = x
 
-        for h, w in itertools.product(range(Hp), range(Wp)):
-            out[..., h, w] = np.max(x[..., h * self.stride : h * self.stride + self.kernel_size,
-                                           w * self.stride : w * self.stride + self.kernel_size], axis=(2, 3))
-        return out
-
-        # # Method 2
-        # shape = (B, C, Hp, Wp, self.kernel_size, self.kernel_size)
-        # strides = (*x.strides[:-2], x.strides[-2] * self.stride, x.strides[-1] * self.stride, *x.strides[-2:])
-        # out = np.lib.stride_tricks.as_strided(x, shape=shape, strides=strides, writeable=False)
-        # return np.max(out, axis=(-2,-1))
 
     def backward(self, delta):
         """Backward propagation of max pooling module.
@@ -314,22 +230,7 @@ class MaxPool(Module):
         Returns:
             out: input delta of shape (B, C, H_in, W_in).
         """
-        dx = np.zeros_like(self.x)
-        B, C, H, W = delta.shape
 
-        for h, w in itertools.product(range(H), range(W)):
-            max = np.max(self.x[..., h * self.stride : h * self.stride + self.kernel_size,
-                                     w * self.stride : w * self.stride + self.kernel_size], axis=(2, 3))
-            mask = self.x[..., h * self.stride:h * self.stride + self.kernel_size,
-                               w * self.stride:w * self.stride + self.kernel_size] == max
-            dx[:, :, h * self.stride : h * self.stride + self.kernel_size,
-                     w * self.stride : w * self.stride + self.kernel_size] \
-                += mask * np.expand_dims(delta[..., h, w], 2).repeat(self.kernel_size ** 2, axis=2) \
-                                                             .reshape(B, C, self.kernel_size, self.kernel_size)
-
-        if self.padding:
-            dx = dx[..., self.padding:-self.padding, self.padding:-self.padding]
-        return dx
 
 
 class Dropout(Module):
@@ -339,14 +240,9 @@ class Dropout(Module):
         self.p = p
 
     def forward(self, x):
-        if self.training:
-            self.mask = np.array(np.random.binomial(1, 1 - self.p, x.shape))
-            return x * self.mask / self.p
-        else:
-            return x
 
-    def backard(self, delta):
-        return delta * self.mask
+
+    def backward(self, delta):
 
 
 if __name__ == '__main__':
